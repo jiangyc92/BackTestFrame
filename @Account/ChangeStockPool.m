@@ -13,64 +13,79 @@ if sum(Pcts) > 1
 end
 
 Slippage = btobj.Slippage;
-SellCommission = btobj.SellComission;
-BuyCommission = btobj.BuyComission;
+SellCommission = btobj.SellCommission;
+BuyCommission = btobj.BuyCommission;
 
+% ChangeTickers表示需要在股票池中调整的股票
+[ChangeTickers, ChangeID0, ChangeID1] = intersect(obj.StockPool.Ticker, Tickers);
+% AddTickers表示需要添加到股票池中的股票
+[AddTickers, AddID0] = setdiff(Tickers, ChangeTickers);
 
-Index = Pcts < 1e-6;
-DeleteTickers = Tickers(Index);
-[DeleteTickers, DeleteID0, DeleteID1] = intersect(obj.StockPool.Tickers, DelteTickers); 
-TickersTmp = Tickers(~Index); 
-[ChangeTickers, ChangeID0, ChangeID1] = intersect(obj.StockPool.Tickers, TickersTmp);
-AddTickers = setdiff(TickersTmp, ChangeTickers);
-
-N = length(Tickers);
+% 获得今天Tickers的bar数据
 BarData = btobj.Data.GetBar(Tickers);
 
-% Step1: 删除需要删除的股票
-DeleteBar = btobj.Data.SelectBar(BarData, Index);
-DeleteBar = btobj.Data.SelectBar(DeleteBar, DeleteID1);
-Price = DeleteBar.(PriceField);
-PreClose = DeleteBar.PreClose;
-for i = 1:length(DeleteTickers)
-    i0 = DeleteID0(i);
-    Ticker = DeleteTickers{i};
-    % 跌停卖不出去
-    if Price(i1) < (1 - 0.095) * PreClose(i)
-        obj.AddRemainedStocksToSell(Ticker);
-        continue;
-    end
-    % 卖出股票
-    dAsset = obj.StockPool.Volume(i0) * Price(i) * (1 - Slippage - SellComission);
-    obj.StockAsset = obj.StockAsset - dAsset;
-    obj.Cash = obj.Cash + dAsset;
-end
-obj.StockPool.Volume(DeleteID0) = 0;
-obj.StockPool.Tickers(DeleteID0) = repmat('', length(DeleteID0), 1);
-obj.StockPool.CostPrice(DeleteID0) = 0;
-
-obj.Asset = obj.StockAsset + obj.Cash;
-
-% Step2: 更改已有持仓
-ChangeBar = btobj.Data.SelectBar(BarData, ~Index);
-ChangeBar = btobj.data.SelectBar(ChangeBar, ChangeID1);
-ChangePcts = Pcts(~Index);
-ChangePcts = ChangePcts(ChangeID1);
+% Step1: 更改已有持仓
+ChangeBar = btobj.Data.SelectBar(BarData, ChangeID1);
 Price = ChangeBar.(PriceField);
 PreClose = ChangeBar.PreClose;
 for i = 1:length(ChangeTickers)
-    i0 = ChangeID0(i);
     Ticker = ChangeTickers{i};
-    Pct = ChangePcts(i);
-    Pct0 = obj.StockPool.Volume(i0) * Price(i) / obj.Asset;
-    % 如果调整幅度过小，则不予调整
-    if abs(Pct0 - Pct) < obj.ChangePositionThreshold
-        continue;
-    end
-    % 减仓
-    if Pct0 > Pct
-        
-    else
+    i0 = ChangeID0(i);
+    i1 = ChangeID1(i);
+    Pct = Pcts(i1);
+    Volume0 = obj.Stockpool.Volume(i0);
+    Volume1 = round(obj.Asset * Pct / Price(i) / (1 + Slippage + 0.5*(BuyCommission + SellCommission)) / 100) * 100;
+    if Volume0 > Volume1
+        dVolume = Volume0 - Volume1;
+        if Price(i) < PreClose(i) * (1 - 0.095)
+            obj.AddRemainedStocksToSell(Ticker, dVolume);
+        else
+            dAsset = dVolume * Price(i) * (1 - Slippage - SellCommission);
+            obj.Cash = obj.Cash + dAsset;
+            obj.Asset = obj.Asset - dVolume * Price(i) * (Slippage + SellCommission);
+            obj.StockPool.Volume(i0) = Volume1;
+            if Volume1 == 0
+                obj.StockPool.Ticker{i0} = '';
+            end
+        end
+    elseif Volume0 < Volume1
+        dVolume0 = Volume1 - Volume0;
+        dVolume1 = floor(obj.Cash / Price(i) / (1 + Slippage + BuyCommission) / 100) * 100;
+        dVolume = min(dVolume0, dVolume1);
+        if Price(i) > PreClose(i) * (1 - 0.095)
+            obj.AddRemainedStocksToBuy(Ticker, dVolume);
+        else
+            dAsset = dVolume * Price(i) * (1 + Slippage + BuyCommission);
+            obj.Cash = obj.Cash - dAsset;
+            obj.Asset = obj.Asset - Price(i) * (Slippage + BuyCommission);
+            obj.StockPool.Volume(i0) = Volume0 + dVolume;
+        end
     end
 end
+
+% Step2: 添加股票
+AddBar = btobj.Data.SelectBar(BarData, AddID0);
+Price = AddBar.(PriceField);
+PreClose = AddBar.PreClose;
+for i = 1:length(AddTickers)
+    Ticker = AddTickers{i};
+    i0 = AddID0(i);
+    Pct = Pcts(i0);
+    Volume0 = round(obj.Asset * Pct / Price(i) / (1 + Slippage + BuyCommission) / 100) * 100;
+    Volume1 = floor(obj.Cash / (Price(i) / (1 + Slippage + BuyCommission) / 100)) * 100;
+    Volume = min(Volume0, Volume1);
+    if Volume > 0
+        if Price(i) > PreClose(i) * (1 + 0.095)
+            obj.AddRemainedStocksToBuy(Ticker, Volume);
+        else
+            dAsset = Volume * Price(i) * (1 + Slippage + BuyCommission);
+            obj.Cash = obj.Cash - dAsset;
+            obj.Asset = obj.Asset - Price(i) * (Slippage + BuyCommission);
+            InsertID = find(strcmp(obj.StockPool.Ticker, ''), 1);
+            obj.StockPool.Ticker{InsertID} = Ticker;
+            obj.StockPool.Volume(InsertID) = Volume;
+        end
+    end
+end
+
 end
