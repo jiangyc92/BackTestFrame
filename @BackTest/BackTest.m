@@ -6,8 +6,6 @@ classdef BackTest < handle
         StartDate
         EndDate
         Displacement
-        LookBack
-        RefreshRate
         NonRiskInterest 
         TopNum
     end
@@ -16,12 +14,24 @@ classdef BackTest < handle
         function obj = BackTest()                      
             obj.Data = DataProcessing();                
             obj.Account = Account();  
-            obj.Strategy = Strategy();
+        end
+        function InitStrategy(obj, StrategyObj)
+            obj.Strategy = StrategyObj;
         end
         AccountPrepare(obj, varargin);
         DataPrepare(obj, varargin);
         StrategyPrepare(obj, Strategy, StrategyPara);
         Run(obj);                           
-        PlotNevValueCurve(obj);
+        PlotNetValueCurve(obj);
+    end
+    
+    % ½Ó¿Ú
+    methods
+        function ChangePosition(obj, Ticker, Pct, PriceField)
+            obj.Account.ChangePosition(obj, Ticker, Pct, PriceField);
+        end
+        function ChangeStockPool(obj, Tickers, Pcts, PriceField)
+            obj.Account.ChangeStockPool(obj, Tickers, Pcts, PriceField);
+        end
     end
 end
